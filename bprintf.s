@@ -12,9 +12,47 @@ global bprintf
 
 %define BUF_SZ          100     ; bprintf buf size
 
+%macro PROLOGUE 0
+                push    rbp
+                mov     rbp, rsp
+%endmacro
+
+;----------------------------------------------
+
+%macro EPILOGUE 0
+                pop     rbp
+%endmacro
+
+%macro EPILOGUE 1
+                add     rsp, QB*%1
+                pop     rbp
+%endmacro
+
+;----------------------------------------------
+
+%macro MULTIPUSH 1-*
+                %rep %0
+                    push %1
+                %rotate 1
+                %endrep
+%endmacro
+
+;----------------------------------------------
+
+%macro MULTIPOP 1-*
+                %rep %0
+                %rotate -1
+                    pop %1
+                %endrep
+%endmacro
+
+;----------------------------------------------
+
 _start:     
 
-main:           push    0x30A
+main:           push    50
+                push    50
+                push    50
                 push    qword __FmtStr
                 call    bprintf
 
@@ -25,23 +63,24 @@ main:           push    0x30A
 ;----------------------------------------------
 ; Printf; supports %c, %%, %b, %x, %o, %d, %s
 ;----------------------------------------------
-bprintf:        mov     rbp, rsp
+bprintf:        
                 push    rbp
+                mov     rbp, rsp
 
-                mov     rsi,  [rbp+QB]
+                mov     rsi,  [rbp+QB*2]
                 mov     rdi,  __buffer
-                mov     r8, 2*QB            ; stack arg offset
+                mov     r8, QB*3            ; stack arg offset
                 xor     rdx, rdx            ; length
 
 .fmt_loop:      lodsb
                 
-                cmp     ax, '%'
+                cmp     ax, '%'             ; add boundcheck
                 jne     .ascii_ch
 
                 lodsb
                 
                 sub     rax, 'b'
-                jmp     [__JmpTbl+rax*DB]
+                jmp     qword [__JmpTbl+rax*QB]
 
 .jmp_c:         mov     ax, [rbp+r8]
                 add     r8, WB
@@ -49,14 +88,32 @@ bprintf:        mov     rbp, rsp
                 inc     rdx
                 jmp     .eos
 
-.jmp_b:         jmp     .eos
+.jmp_b:         mov     ebx, [rbp+r8]
+                add     r8, QB
+                MULTIPUSH rax, rsi
+                call    to_bin
+                add     rdx, rax
+                MULTIPOP rax, rsi
+                jmp     .eos
+
 .jmp_d:         jmp     .eos
-.jmp_o:         jmp     .eos
+
+.jmp_o:         mov     ebx, [rbp+r8]
+                add     r8, QB
+                MULTIPUSH rax, rsi
+                call    to_oct
+                add     rdx, rax
+                MULTIPOP rax, rsi
+                jmp     .eos
+
 .jmp_s:         jmp     .eos
+
 .jmp_x:         mov     ebx, [rbp+r8]
                 add     r8, QB
+                MULTIPUSH rax, rsi
                 call    to_hex
-                add     rdx, 8
+                add     rdx, rax
+                MULTIPOP rax, rsi
                 jmp     .eos
                 
 .ascii_ch:      stosb
@@ -64,8 +121,6 @@ bprintf:        mov     rbp, rsp
 
 .eos:           cmp     ax, NULL_TERM
                 je      .end  
-
-
                 jmp     .fmt_loop
 
 .end:           mov     rax, 1
@@ -78,51 +133,114 @@ bprintf:        mov     rbp, rsp
                 ret
 
 ;----------------------------------------------
-; Convert qword string (base 16)
+; Convert qword to string (base 16)
 ; Entry:        EBX   = value
 ;               EDI --> str
-;               EDX   = str ptr
+; Exit:         EAX   = printed length
 ; Destr:        r12, EAX, EBX, ECX
 ;----------------------------------------------
-to_hex:         mov     ecx, DB*8/4
-                rol     ebx, 4
+; to_hex:         lzcnt   rcx, rbx
+;                 shr     rcx, 2
+;                 push    rcx
+;                 sal     rcx, 2
+;                 add     rcx, 4
+;                 rol     rbx, cl
+;
+;                 pop     rcx
+;                 not     rcx
+;                 lea     rcx, [rcx+QB*8/4+1]
+;                 mov     rax, rcx
+;
+; .cnvrt_loop:    mov     r12, rbx
+;                 and     r12, 0xF
+;                 mov     al, [__HexASCII_Tbl+r12]
+;                 rol     rbx, 4
+;                 stosb
+;                 loop    .cnvrt_loop
+;
+; .end            ret
+;
 
-.skip_lead_zeros_loop:
+%macro          CNVRT_TO_POW_OF_2 3
+%1:         
+                push    rdi
+                mov     rdi, __cnvrt_buf
+                mov     cx, QB*8/%2
+
+.cnvrt_loop:    
                 mov     r12, rbx
-                and     r12, 0xF
-                jnz     .cnvrt_loop 
-                rol     ebx, 4
-                loop    .skip_lead_zeros_loop
-
-                jmp     .end
-
-.cnvrt_loop:    mov     r12, rbx
-                and     r12, 0xF
+                and     r12, %3
                 mov     al, [__HexASCII_Tbl+r12]
-                rol     ebx, 4
                 stosb
-.end:           loop    .cnvrt_loop
+                shr     rbx, %2
+                jz      .cnvrt_loop_end
+                loop    .cnvrt_loop
+
+.cnvrt_loop_end:
+                neg     rcx
+                lea     rcx, [rcx+QB*8/%2+1]
+                mov     rax, rcx
+                
+                lea     rsi, [rdi-1]
+                pop     rdi
+
+.cpy_loop:      
+                mov     bl, byte [rsi]
+                dec     rsi 
+                mov     byte [rdi], bl
+                inc     rdi
+                loop    .cpy_loop
 
                 ret
+%endmacro
+
+;----------------------------------------------
+; Convert qword to string (base 16)
+; Entry:        EBX   = value
+;               EDI --> str
+; Exit:         EAX   = printed length
+; Destr:        r12, EAX, EBX, ECX, RSI
+;----------------------------------------------
+CNVRT_TO_POW_OF_2 to_hex, 4, 0xF
+
+;----------------------------------------------
+; Convert qword to string (base 8)
+; Entry:        EBX   = value
+;               EDI --> str
+; Exit:         EAX   = printed length
+; Destr:        r12, EAX, EBX, ECX, RSI
+;----------------------------------------------
+CNVRT_TO_POW_OF_2 to_oct, 3, 0x7
+
+;----------------------------------------------
+; Convert qword to string (base 2)
+; Entry:        EBX   = value
+;               EDI --> str
+; Exit:         EAX   = printed length
+; Destr:        r12, EAX, EBX, ECX, RSI
+;----------------------------------------------
+CNVRT_TO_POW_OF_2 to_bin, 1, 0x1
 
 section .data
 
 __buffer        db BUF_SZ dup(0)
 
+__cnvrt_buf     db 64 dup(0)
+
 section .rodata
 
-__FmtStr        db "%x", NULL_TERM
+__FmtStr        db "%x %o %b", NULL_TERM
 
 __HexASCII_Tbl  db "0123456789ABCDEF"
 
-__JmpTbl        dd bprintf.jmp_b
-                dd bprintf.jmp_c
-                dd bprintf.jmp_d
-                dd 10 dup(0)
-                dd bprintf.jmp_o
-                dd 3 dup(0)
-                dd bprintf.jmp_s
-                dd 4 dup(0)
-                dd bprintf.jmp_x
+__JmpTbl        dq bprintf.jmp_b
+                dq bprintf.jmp_c
+                dq bprintf.jmp_d
+                dq 10 dup(0)
+                dq bprintf.jmp_o
+                dq 3 dup(0)
+                dq bprintf.jmp_s
+                dq 4 dup(0)
+                dq bprintf.jmp_x
 
 
