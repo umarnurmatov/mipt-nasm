@@ -64,6 +64,26 @@ main:           push    50
 
 %define BUF_SZ 50                           ; bprintf buf size
 
+%macro JMP_CNVRT_TO_POWER_OF_2 1
+                cmp     rdx, BUF_SZ-QB
+                jae     .flush_buf
+                mov     ebx, [rbp+r8]
+                add     r8, QB
+                MULTIPUSH rax, rsi
+                call    %1
+                add     rdx, rax
+                MULTIPOP rax, rsi
+                jmp     .fmt_loop
+%endmacro
+
+%macro JMP_CNVRT_TO_CHAR 0
+        mov     ax, [rbp+r8]
+        add     r8, QB
+        stosb
+        inc     rdx
+        jmp     .fmt_loop
+%endmacro
+
 bprintf:        
                 push    rbp
                 mov     rbp, rsp
@@ -80,50 +100,24 @@ bprintf:
 
                 lodsb
                 
+                cmp     ax, '%'
+                je      .jmp_percent
                 sub     rax, 'b'
                 jmp     qword [__JmpTbl+rax*QB]
 
-.jmp_c:         mov     ax, [rbp+r8]
-                add     r8, WB
-                stosb
-                inc     rdx
-                jmp     .flush_buf_chk
+.jmp_c:         JMP_CNVRT_TO_CHAR
 
-.jmp_b:         
-                cmp     rdx, BUF_SZ-QB
-                jae     .flush_buf
-                mov     ebx, [rbp+r8]
-                add     r8, QB
-                MULTIPUSH rax, rsi
-                call    to_bin
-                add     rdx, rax
-                MULTIPOP rax, rsi
-                jmp     .flush_buf_chk
+.jmp_b:         JMP_CNVRT_TO_POWER_OF_2 to_bin
 
-.jmp_d:         jmp     .flush_buf_chk
+.jmp_d:         jmp     .fmt_loop
 
-.jmp_o:         cmp     rdx, BUF_SZ-QB
-                jae     .flush_buf
-                mov     ebx, [rbp+r8]
-                add     r8, QB
-                MULTIPUSH rax, rsi
-                call    to_oct
-                add     rdx, rax
-                MULTIPOP rax, rsi
-                jmp     .flush_buf_chk
+.jmp_o:         JMP_CNVRT_TO_POWER_OF_2 to_oct
 
-.jmp_s:         jmp     .flush_buf_chk
+.jmp_s:         jmp     .fmt_loop
 
-.jmp_x:         
-                cmp     rdx, BUF_SZ-QB
-                jae     .flush_buf
-                mov     ebx, [rbp+r8]
-                add     r8, QB
-                MULTIPUSH rax, rsi
-                call    to_hex
-                add     rdx, rax
-                MULTIPOP rax, rsi
-                jmp     .flush_buf_chk
+.jmp_x:         JMP_CNVRT_TO_POWER_OF_2 to_hex
+
+.jmp_percent:   JMP_CNVRT_TO_CHAR
                 
 .ascii_ch:      stosb
                 inc     rdx
@@ -156,6 +150,12 @@ bprintf:
 
                 pop     rbp
                 ret
+
+%undef JMP_CNVRT_TO_POWER_OF_2
+
+%undef JMP_CNVRT_TO_CHAR
+
+;----------------------------------------------
 
 ;----------------------------------------------
 ; Convert qword to string (base 16)
@@ -254,7 +254,7 @@ __cnvrt_buf     db 64 dup(0)
 
 section .rodata
 
-__FmtStr        db "%x %o %b", NULL_TERM
+__FmtStr        db `asdf %x %o %b \n asdf %%`, NULL_TERM
 
 __Ascii_Lut     db "0123456789ABCDEF"
 
