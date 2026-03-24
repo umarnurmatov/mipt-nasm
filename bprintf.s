@@ -9,6 +9,7 @@ global bprintf
 %define WB              2                     ; bytes in word
 %define DB              4                     ; bytes in double word
 %define QB              8                     ; bytes in quad
+%define LATIN_ALPH_LEN  23
 
 %macro PROLOGUE 0
                 push    rbp
@@ -62,31 +63,20 @@ main:           push    50
 ; Printf; supports %c, %%, %b, %x, %o, %d, %s
 ;----------------------------------------------
 
-%define BUF_SZ 50                           ; bprintf buf size
+%define BUF_SZ 164                           ; bprintf buf size, >64!
 
 %macro JMP_CNVRT_TO_POWER_OF_2 1
-                cmp     rdx, BUF_SZ-QB
-                jae     .flush_buf
-                mov     ebx, [rbp+r8]
+                mov     rbx, qword [rbp+r8]
                 add     r8, QB
-                MULTIPUSH rax, rsi
+                push rsi
                 call    %1
                 add     rdx, rax
-                MULTIPOP rax, rsi
-                jmp     .fmt_loop
-%endmacro
-
-%macro JMP_CNVRT_TO_CHAR 0
-        mov     ax, [rbp+r8]
-        add     r8, QB
-        stosb
-        inc     rdx
-        jmp     .fmt_loop
+                pop rsi
+                jmp     .flush_buf_chk
 %endmacro
 
 bprintf:        
-                push    rbp
-                mov     rbp, rsp
+                PROLOGUE
 
                 mov     rsi,  [rbp+QB*2]
                 mov     rdi,  __buffer
@@ -95,36 +85,49 @@ bprintf:
 
 .fmt_loop:      lodsb
                 
-                cmp     ax, '%'             ; add boundcheck
-                jne     .ascii_ch
+                cmp     al, '%'             ; add boundcheck
+                jne     .jmp_default
 
                 lodsb
                 
-                cmp     ax, '%'
+                cmp     al, '%'
                 je      .jmp_percent
+                cmp     al, 'a'
+                jbe     .jmp_default
+                cmp     al, 'y'
+                jae     .jmp_default 
                 sub     rax, 'b'
                 jmp     qword [__JmpTbl+rax*QB]
 
-.jmp_c:         JMP_CNVRT_TO_CHAR
+.jmp_c:         mov     rax, qword [rbp+r8]
+                add     r8, QB
+                stosb
+                inc     rdx
+                jmp     .flush_buf_chk
 
 .jmp_b:         JMP_CNVRT_TO_POWER_OF_2 to_bin
 
-.jmp_d:         jmp     .fmt_loop
+.jmp_d:         jmp     .flush_buf_chk
 
 .jmp_o:         JMP_CNVRT_TO_POWER_OF_2 to_oct
 
-.jmp_s:         jmp     .fmt_loop
+.jmp_s:         jmp     .flush_buf_chk
 
 .jmp_x:         JMP_CNVRT_TO_POWER_OF_2 to_hex
 
-.jmp_percent:   JMP_CNVRT_TO_CHAR
-                
-.ascii_ch:      stosb
+.jmp_percent:   stosb
                 inc     rdx
+                jmp     .flush_buf_chk
+
+.jmp_default:   stosb
+                inc     rdx
+                cmp     al, NULL_TERM
+                je      .end  
+                jmp     .fmt_loop
 
 .flush_buf_chk:
-                cmp     rdx, BUF_SZ
-                jb      .eos
+                cmp     rdx, BUF_SZ - 64
+                jb      .fmt_loop
 
 .flush_buf:     
                 push    rsi
@@ -138,17 +141,13 @@ bprintf:
                 xor     rdx, rdx
                 jmp     .fmt_loop
 
-.eos:           cmp     ax, NULL_TERM
-                je      .end  
-                jmp     .fmt_loop
-
 .end:           mov     rax, 1
                 mov     rdi, 0
                 mov     rsi, __buffer
                 ; rdx already equals buffer len
                 syscall
 
-                pop     rbp
+                EPILOGUE
                 ret
 
 %undef JMP_CNVRT_TO_POWER_OF_2
@@ -254,18 +253,18 @@ __cnvrt_buf     db 64 dup(0)
 
 section .rodata
 
-__FmtStr        db `asdf %x %o %b \n asdf %%`, NULL_TERM
+__FmtStr        db `asdf %x %o %b \nasdf %%`, NULL_TERM
 
 __Ascii_Lut     db "0123456789ABCDEF"
 
 __JmpTbl        dq bprintf.jmp_b
                 dq bprintf.jmp_c
                 dq bprintf.jmp_d
-                dq 10 dup(0)
+                dq 10 dup(bprintf.jmp_default)
                 dq bprintf.jmp_o
-                dq 3 dup(0)
+                dq 3 dup(bprintf.jmp_default)
                 dq bprintf.jmp_s
-                dq 4 dup(0)
+                dq 4 dup(bprintf.jmp_default)
                 dq bprintf.jmp_x
 
 
