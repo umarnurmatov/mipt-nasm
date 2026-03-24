@@ -10,8 +10,6 @@ global bprintf
 %define DB              4                     ; bytes in double word
 %define QB              8                     ; bytes in quad
 
-%define BUF_SZ          100     ; bprintf buf size
-
 %macro PROLOGUE 0
                 push    rbp
                 mov     rbp, rsp
@@ -63,6 +61,9 @@ main:           push    50
 ;----------------------------------------------
 ; Printf; supports %c, %%, %b, %x, %o, %d, %s
 ;----------------------------------------------
+
+%define BUF_SZ 50                           ; bprintf buf size
+
 bprintf:        
                 push    rbp
                 mov     rbp, rsp
@@ -86,38 +87,62 @@ bprintf:
                 add     r8, WB
                 stosb
                 inc     rdx
-                jmp     .eos
+                jmp     .flush_buf_chk
 
-.jmp_b:         mov     ebx, [rbp+r8]
+.jmp_b:         
+                cmp     rdx, BUF_SZ-QB
+                jae     .flush_buf
+                mov     ebx, [rbp+r8]
                 add     r8, QB
                 MULTIPUSH rax, rsi
                 call    to_bin
                 add     rdx, rax
                 MULTIPOP rax, rsi
-                jmp     .eos
+                jmp     .flush_buf_chk
 
-.jmp_d:         jmp     .eos
+.jmp_d:         jmp     .flush_buf_chk
 
-.jmp_o:         mov     ebx, [rbp+r8]
+.jmp_o:         cmp     rdx, BUF_SZ-QB
+                jae     .flush_buf
+                mov     ebx, [rbp+r8]
                 add     r8, QB
                 MULTIPUSH rax, rsi
                 call    to_oct
                 add     rdx, rax
                 MULTIPOP rax, rsi
-                jmp     .eos
+                jmp     .flush_buf_chk
 
-.jmp_s:         jmp     .eos
+.jmp_s:         jmp     .flush_buf_chk
 
-.jmp_x:         mov     ebx, [rbp+r8]
+.jmp_x:         
+                cmp     rdx, BUF_SZ-QB
+                jae     .flush_buf
+                mov     ebx, [rbp+r8]
                 add     r8, QB
                 MULTIPUSH rax, rsi
                 call    to_hex
                 add     rdx, rax
                 MULTIPOP rax, rsi
-                jmp     .eos
+                jmp     .flush_buf_chk
                 
 .ascii_ch:      stosb
                 inc     rdx
+
+.flush_buf_chk:
+                cmp     rdx, BUF_SZ
+                jb      .eos
+
+.flush_buf:     
+                push    rsi
+                mov     rax, 1
+                mov     rdi, 0
+                mov     rsi, __buffer
+                ; rdx already equals buffer len
+                syscall
+                mov     rdi,  __buffer
+                pop     rsi
+                xor     rdx, rdx
+                jmp     .fmt_loop
 
 .eos:           cmp     ax, NULL_TERM
                 je      .end  
@@ -153,7 +178,7 @@ bprintf:
 ;
 ; .cnvrt_loop:    mov     r12, rbx
 ;                 and     r12, 0xF
-;                 mov     al, [__HexASCII_Tbl+r12]
+;                 mov     al, [__Ascii_Lut+r12]
 ;                 rol     rbx, 4
 ;                 stosb
 ;                 loop    .cnvrt_loop
@@ -165,12 +190,12 @@ bprintf:
 %1:         
                 push    rdi
                 mov     rdi, __cnvrt_buf
-                mov     cx, QB*8/%2
+                mov     rcx, QB*8/%2
 
 .cnvrt_loop:    
                 mov     r12, rbx
                 and     r12, %3
-                mov     al, [__HexASCII_Tbl+r12]
+                mov     al, [__Ascii_Lut+r12]
                 stosb
                 shr     rbx, %2
                 jz      .cnvrt_loop_end
@@ -231,7 +256,7 @@ section .rodata
 
 __FmtStr        db "%x %o %b", NULL_TERM
 
-__HexASCII_Tbl  db "0123456789ABCDEF"
+__Ascii_Lut     db "0123456789ABCDEF"
 
 __JmpTbl        dq bprintf.jmp_b
                 dq bprintf.jmp_c
