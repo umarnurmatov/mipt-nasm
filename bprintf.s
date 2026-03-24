@@ -11,13 +11,15 @@ global bprintf
 %define QBYTES          8                     ; bytes in quad
 %define MAX_STR_LEN     0xffffffff
 
+;----------------------------------------------
 %macro PROLOGUE 0
                 push    rbp
                 mov     rbp, rsp
 %endmacro
-
 ;----------------------------------------------
 
+
+;----------------------------------------------
 %macro EPILOGUE 0
                 pop     rbp
 %endmacro
@@ -26,36 +28,52 @@ global bprintf
                 add     rsp, QBYTES*%1
                 pop     rbp
 %endmacro
-
 ;----------------------------------------------
 
+
+;----------------------------------------------
+; Push n entities (in same order)
+; Entry: %1-* = reg/imm
+;----------------------------------------------
 %macro MULTIPUSH 1-*
                 %rep %0
                     push %1
                 %rotate 1
                 %endrep
 %endmacro
-
 ;----------------------------------------------
 
+
+;----------------------------------------------
+; Pop n entities (in reverse order)
+; Entry: %1-* = reg/imm
+;----------------------------------------------
 %macro MULTIPOP 1-*
                 %rep %0
                 %rotate -1
                     pop %1
                 %endrep
 %endmacro
+;----------------------------------------------
 
+
+;----------------------------------------------
+; Write (syscall) to stdout
+; Entry: %1 --> src
+; Assum: rdx = string len
+;----------------------------------------------
+%macro WRITE_STDOUT 1
+                mov     rax, 1
+                mov     rdi, 0
+                mov     rsi, %1
+                syscall
+%endmacro
 ;----------------------------------------------
 
 _start:     
 
 main:           
-                push    __Str2
-                push    __Str1
-                push    50
-                push    50
-                push    50
-                push    qword __FmtStr
+                MULTIPUSH __Str2, __Str1, 10, 20, 30, __FmtStr
                 call    bprintf
 
                 mov     rax, 0x3C
@@ -64,11 +82,26 @@ main:
 
 ;----------------------------------------------
 ; Printf; supports %c, %%, %b, %x, %o, %d, %s
+; Entry (cdecl): RBP+8 --> fmt string
+;                RBP+16, ... =/--> parameters
+; Destr:         RAX, RBX, RCX, RDI, RSI, R8
 ;----------------------------------------------
 
 %define BUF_SZ 164                           ; bprintf buf size, >64!
 
 %define MAX_CNVRTD_NUM_LEN 64
+
+%macro FLUSH_BUF 0
+                WRITE_STDOUT __buffer
+%endmacro
+
+%macro FLUSH_BUF_AND_RESET 0
+                push    rsi
+                FLUSH_BUF 
+                mov     rdi,  __buffer
+                pop     rsi
+                xor     rdx, rdx
+%endmacro
 
 %macro JMP_CNVRT_TO_POWER_OF_2 1
                 mov     rbx, qword [rbp+r8]
@@ -95,16 +128,10 @@ main:
                 jb      .jmp_s_end 
 
                 push    rdi
-                mov     rax, 1
-                mov     rdi, 0
-                mov     rsi, __buffer
-                syscall
+                FLUSH_BUF
 
                 pop     rdx
-                mov     rax, 1
-                mov     rdi, 0
-                mov     rsi, rbx
-                syscall
+                WRITE_STDOUT rbx
 
                 MULTIPOP rsi, rdi
 
@@ -123,20 +150,6 @@ main:
 
 %endmacro
 
-%macro FLUSH_BUF 0
-                mov     rax, 1
-                mov     rdi, 0
-                mov     rsi, __buffer
-                syscall
-%endmacro
-
-%macro FLUSH_BUF_RESTORE_REGS 0
-                push    rsi
-                FLUSH_BUF
-                mov     rdi,  __buffer
-                pop     rsi
-                xor     rdx, rdx
-%endmacro
 
 bprintf:        
                 PROLOGUE
@@ -149,7 +162,7 @@ bprintf:
 
 .fmt_loop:      lodsb
                 
-                cmp     al, '%'             ; add boundcheck
+                cmp     al, '%'         
                 jne     .regular_char
 
                 lodsb
@@ -202,7 +215,7 @@ bprintf:
                 cmp     rdx, BUF_SZ - MAX_CNVRTD_NUM_LEN
                 jb      .fmt_loop
 
-.flush_buf:     FLUSH_BUF_RESTORE_REGS
+.flush_buf:     FLUSH_BUF_AND_RESET
                 jmp     .fmt_loop
 
 .end:           FLUSH_BUF
@@ -214,8 +227,7 @@ bprintf:
 
 %undef FLUSH_BUF
 
-%undef FLUSH_BUF_RESTORE_REGS
-
+%undef FLUSH_BUF_AND_RESET
 ;----------------------------------------------
 
 ;----------------------------------------------
