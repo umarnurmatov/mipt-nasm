@@ -86,7 +86,7 @@ bprintf:
 .fmt_loop:      lodsb
                 
                 cmp     al, '%'             ; add boundcheck
-                jne     .jmp_default
+                jne     .regular_char
 
                 lodsb
                 
@@ -119,9 +119,18 @@ bprintf:
                 inc     rdx
                 jmp     .flush_buf_chk
 
-.jmp_default:   stosb
+.jmp_default:   push    rax 
+                mov     al, byte '%'
+                stosb
+                pop     rax
+                stosb
+                add     rdx, 2
+                jmp     .eos_chk
+
+.regular_char:  stosb
                 inc     rdx
-                cmp     al, NULL_TERM
+
+.eos_chk:       cmp     al, NULL_TERM
                 je      .end  
                 jmp     .fmt_loop
 
@@ -253,7 +262,7 @@ __cnvrt_buf     db 64 dup(0)
 
 section .rodata
 
-__FmtStr        db `asdf %x %o %b \nasdf %%`, NULL_TERM
+__FmtStr        db `asdf %A %o %b \nasdf %%`, NULL_TERM
 
 __Ascii_Lut     db "0123456789ABCDEF"
 
