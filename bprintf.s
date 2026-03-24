@@ -6,10 +6,10 @@ global _start
 global bprintf
 
 %define NULL_TERM       0x0                   ; null-terminator
-%define WB              2                     ; bytes in word
-%define DB              4                     ; bytes in double word
-%define QB              8                     ; bytes in quad
-%define LATIN_ALPH_LEN  23
+%define WBYTES          2                     ; bytes in word
+%define DBYTES          4                     ; bytes in double word
+%define QBYTES          8                     ; bytes in quad
+%define MAX_STR_LEN     0xffffffff
 
 %macro PROLOGUE 0
                 push    rbp
@@ -23,7 +23,7 @@ global bprintf
 %endmacro
 
 %macro EPILOGUE 1
-                add     rsp, QB*%1
+                add     rsp, QBYTES*%1
                 pop     rbp
 %endmacro
 
@@ -49,7 +49,10 @@ global bprintf
 
 _start:     
 
-main:           push    50
+main:           
+                push    __Str2
+                push    __Str1
+                push    50
                 push    50
                 push    50
                 push    qword __FmtStr
@@ -65,9 +68,11 @@ main:           push    50
 
 %define BUF_SZ 164                           ; bprintf buf size, >64!
 
+%define MAX_CNVRTD_NUM_LEN 64
+
 %macro JMP_CNVRT_TO_POWER_OF_2 1
                 mov     rbx, qword [rbp+r8]
-                add     r8, QB
+                add     r8, QBYTES
                 push rsi
                 call    %1
                 add     rdx, rax
@@ -75,13 +80,72 @@ main:           push    50
                 jmp     .flush_buf_chk
 %endmacro
 
+%macro JMP_S 0
+                MULTIPUSH rsi, rdi
+                mov     rbx, qword [rbp+r8] 
+                mov     rdi, rbx
+                add     r8, QBYTES
+                mov     rcx, MAX_STR_LEN
+                xor     al, al
+
+                repne scasb
+
+                sub     rdi, rbx
+                cmp     rdi, BUF_SZ - MAX_CNVRTD_NUM_LEN
+                jb      .jmp_s_end 
+
+                push    rdi
+                mov     rax, 1
+                mov     rdi, 0
+                mov     rsi, __buffer
+                syscall
+
+                pop     rdx
+                mov     rax, 1
+                mov     rdi, 0
+                mov     rsi, rbx
+                syscall
+
+                MULTIPOP rsi, rdi
+
+                mov     rdi, __buffer
+                xor     rdx, rdx
+
+                jmp     .fmt_loop
+
+.jmp_s_end:     add     rdx, rdi
+                mov     rcx, rdi
+                pop     rdi
+                mov     rsi, rbx
+                rep movsb
+                pop     rsi
+                jmp     .fmt_loop
+
+%endmacro
+
+%macro FLUSH_BUF 0
+                mov     rax, 1
+                mov     rdi, 0
+                mov     rsi, __buffer
+                syscall
+%endmacro
+
+%macro FLUSH_BUF_RESTORE_REGS 0
+                push    rsi
+                FLUSH_BUF
+                mov     rdi,  __buffer
+                pop     rsi
+                xor     rdx, rdx
+%endmacro
+
 bprintf:        
                 PROLOGUE
 
-                mov     rsi,  [rbp+QB*2]
+                mov     rsi,  [rbp+QBYTES*2]
                 mov     rdi,  __buffer
-                mov     r8, QB*3            ; stack arg offset
+                mov     r8, QBYTES*3        ; stack arg offset
                 xor     rdx, rdx            ; length
+                cld
 
 .fmt_loop:      lodsb
                 
@@ -97,10 +161,10 @@ bprintf:
                 cmp     al, 'y'
                 jae     .jmp_default 
                 sub     rax, 'b'
-                jmp     qword [__JmpTbl+rax*QB]
+                jmp     qword [__JmpTbl+rax*QBYTES]
 
 .jmp_c:         mov     rax, qword [rbp+r8]
-                add     r8, QB
+                add     r8, QBYTES
                 stosb
                 inc     rdx
                 jmp     .flush_buf_chk
@@ -111,7 +175,7 @@ bprintf:
 
 .jmp_o:         JMP_CNVRT_TO_POWER_OF_2 to_oct
 
-.jmp_s:         jmp     .flush_buf_chk
+.jmp_s:         JMP_S
 
 .jmp_x:         JMP_CNVRT_TO_POWER_OF_2 to_hex
 
@@ -135,33 +199,22 @@ bprintf:
                 jmp     .fmt_loop
 
 .flush_buf_chk:
-                cmp     rdx, BUF_SZ - 64
+                cmp     rdx, BUF_SZ - MAX_CNVRTD_NUM_LEN
                 jb      .fmt_loop
 
-.flush_buf:     
-                push    rsi
-                mov     rax, 1
-                mov     rdi, 0
-                mov     rsi, __buffer
-                ; rdx already equals buffer len
-                syscall
-                mov     rdi,  __buffer
-                pop     rsi
-                xor     rdx, rdx
+.flush_buf:     FLUSH_BUF_RESTORE_REGS
                 jmp     .fmt_loop
 
-.end:           mov     rax, 1
-                mov     rdi, 0
-                mov     rsi, __buffer
-                ; rdx already equals buffer len
-                syscall
+.end:           FLUSH_BUF
 
                 EPILOGUE
                 ret
 
 %undef JMP_CNVRT_TO_POWER_OF_2
 
-%undef JMP_CNVRT_TO_CHAR
+%undef FLUSH_BUF
+
+%undef FLUSH_BUF_RESTORE_REGS
 
 ;----------------------------------------------
 
@@ -181,7 +234,7 @@ bprintf:
 ;
 ;                 pop     rcx
 ;                 not     rcx
-;                 lea     rcx, [rcx+QB*8/4+1]
+;                 lea     rcx, [rcx+QBYTES*8/4+1]
 ;                 mov     rax, rcx
 ;
 ; .cnvrt_loop:    mov     r12, rbx
@@ -198,7 +251,7 @@ bprintf:
 %1:         
                 push    rdi
                 mov     rdi, __cnvrt_buf
-                mov     rcx, QB*8/%2
+                mov     rcx, QBYTES*8/%2
 
 .cnvrt_loop:    
                 mov     r12, rbx
@@ -211,7 +264,7 @@ bprintf:
 
 .cnvrt_loop_end:
                 neg     rcx
-                lea     rcx, [rcx+QB*8/%2+1]
+                lea     rcx, [rcx+QBYTES*8/%2+1]
                 mov     rax, rcx
                 
                 lea     rsi, [rdi-1]
@@ -262,7 +315,11 @@ __cnvrt_buf     db 64 dup(0)
 
 section .rodata
 
-__FmtStr        db `asdf %A %o %b \nasdf %%`, NULL_TERM
+__FmtStr        db `alpha %A %x %o %b \nbeta %% %s %s`, NULL_TERM
+
+__Str1          db `gamma`, NULL_TERM
+
+__Str2          db 10 dup(`delta `), NULL_TERM
 
 __Ascii_Lut     db "0123456789ABCDEF"
 
