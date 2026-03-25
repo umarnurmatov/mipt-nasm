@@ -73,7 +73,7 @@ global bprintf
 _start:     
 
 main:           
-                MULTIPUSH __Str2, __Str1, 10, 20, 30, __FmtStr
+                MULTIPUSH __Str2, __Str1, 10, 20, 30, 0, __FmtStr
                 call    bprintf
 
                 mov     rax, 0x3C
@@ -184,7 +184,13 @@ bprintf:
 
 .jmp_b:         JMP_CNVRT_TO_POWER_OF_2 to_bin
 
-.jmp_d:         jmp     .flush_buf_chk
+.jmp_d:         mov     rbx, qword [rbp+r8]
+                push    rsi
+                add     r8, QBYTES
+                call    to_dec
+                add     rdx, r12
+                pop     rsi
+                jmp     .flush_buf_chk
 
 .jmp_o:         JMP_CNVRT_TO_POWER_OF_2 to_oct
 
@@ -230,35 +236,6 @@ bprintf:
 %undef FLUSH_BUF_AND_RESET
 ;----------------------------------------------
 
-;----------------------------------------------
-; Convert qword to string (base 16)
-; Entry:        EBX   = value
-;               EDI --> str
-; Exit:         EAX   = printed length
-; Destr:        r12, EAX, EBX, ECX
-;----------------------------------------------
-; to_hex:         lzcnt   rcx, rbx
-;                 shr     rcx, 2
-;                 push    rcx
-;                 sal     rcx, 2
-;                 add     rcx, 4
-;                 rol     rbx, cl
-;
-;                 pop     rcx
-;                 not     rcx
-;                 lea     rcx, [rcx+QBYTES*8/4+1]
-;                 mov     rax, rcx
-;
-; .cnvrt_loop:    mov     r12, rbx
-;                 and     r12, 0xF
-;                 mov     al, [__Ascii_Lut+r12]
-;                 rol     rbx, 4
-;                 stosb
-;                 loop    .cnvrt_loop
-;
-; .end            ret
-;
-
 %macro          CNVRT_TO_POW_OF_2 3
 %1:         
                 push    rdi
@@ -294,30 +271,84 @@ bprintf:
 
 ;----------------------------------------------
 ; Convert qword to string (base 16)
-; Entry:        EBX   = value
+; Entry:        RBX   = value
 ;               EDI --> str
 ; Exit:         EAX   = printed length
-; Destr:        r12, EAX, EBX, ECX, RSI
+; Destr:        r12, EAX, EBX, ECX, 
+;               RSI, __cnvrt_buf
 ;----------------------------------------------
 CNVRT_TO_POW_OF_2 to_hex, 4, 0xF
 
 ;----------------------------------------------
 ; Convert qword to string (base 8)
-; Entry:        EBX   = value
+; Entry:        RBX   = value
 ;               EDI --> str
 ; Exit:         EAX   = printed length
-; Destr:        r12, EAX, EBX, ECX, RSI
+; Destr:        r12, EAX, EBX, ECX, 
+;               RSI, __cnvrt_buf
 ;----------------------------------------------
 CNVRT_TO_POW_OF_2 to_oct, 3, 0x7
 
 ;----------------------------------------------
 ; Convert qword to string (base 2)
-; Entry:        EBX   = value
+; Entry:        RBX   = value
 ;               EDI --> str
 ; Exit:         EAX   = printed length
-; Destr:        r12, EAX, EBX, ECX, RSI
+; Destr:        r12, EAX, EBX, ECX, 
+;               RSI, __cnvrt_buf
 ;----------------------------------------------
 CNVRT_TO_POW_OF_2 to_bin, 1, 0x1
+
+;----------------------------------------------
+; Convert qword to string (base 10)
+; Entry:        RBX   = value
+;               EDI --> str
+; Exit:         R12   = printed length
+; Destr:        RAX, RCX, RDX, RDI, __cnvrt_buf
+;----------------------------------------------
+to_dec:         xor     r12, r12
+
+                mov     rcx, 10
+                cmp     rbx, 0
+                jge     .cnvrt_loop_prep
+
+                mov     al, '-'
+                stosb
+                inc     r12
+                inc     rdi
+
+                xor     rbx, -1
+                add     rbx, 1
+
+.cnvrt_loop_prep:
+                push    rdi
+                mov     rdi, __cnvrt_buf
+
+.cnvrt_loop:    xor     rdx, rdx
+                mov     rax, rbx
+                div     rcx
+                mov     rbx, rax
+                add     rdx, '0'
+                mov     al, dl
+                stosb
+                inc     r12
+
+                cmp     rbx, 0
+                jz      .cpy_loop_prep
+                jmp     .cnvrt_loop
+
+.cpy_loop_prep: pop     rdi
+                lea     rsi, [__cnvrt_buf+r12-1]
+                mov     rcx, r12
+
+.cpy_loop:      mov     al, byte [rsi]
+                dec     rsi
+                mov     byte [rdi], al
+                inc     rdi
+                loop    .cpy_loop
+
+                ret
+;----------------------------------------------
 
 section .data
 
@@ -327,7 +358,7 @@ __cnvrt_buf     db 64 dup(0)
 
 section .rodata
 
-__FmtStr        db `alpha %A %x %o %b \nbeta %% %s %s`, NULL_TERM
+__FmtStr        db `%d alpha %A %x %o %b \nbeta %% %s %s`, NULL_TERM
 
 __Str1          db `gamma`, NULL_TERM
 
