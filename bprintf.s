@@ -1,8 +1,5 @@
 section .text
 
-extern _printf
-
-global _start
 global bprintf
 
 %define NULL_TERM       0x0                   ; null-terminator
@@ -70,21 +67,15 @@ global bprintf
 %endmacro
 ;----------------------------------------------
 
-_start:     
 
-main:           
-                MULTIPUSH __Str2, __Str1, 10, 20, 30, 0, __FmtStr
-                call    bprintf
-
+_start:           
                 mov     rax, 0x3C
                 xor     rdi, rdi
                 syscall
 
 ;----------------------------------------------
 ; Printf; supports %c, %%, %b, %x, %o, %d, %s
-; Entry (cdecl): RBP+8 --> fmt string
-;                RBP+16, ... =/--> parameters
-; Destr:         RAX, RBX, RCX, RDI, RSI, R8
+; (System-V-compliant)
 ;----------------------------------------------
 
 %define BUF_SZ 164                           ; bprintf buf size, >64!
@@ -151,13 +142,20 @@ main:
 %endmacro
 
 
-bprintf:        
+bprintf:        pop     rax                 ; save return address
+
+                MULTIPUSH r9, r8, rcx, rdx, rsi, rdi
+
+                push    rax                 ; pop return address 
+                                            ; on top of stack
+                
                 PROLOGUE
 
                 mov     rsi,  [rbp+QBYTES*2]
                 mov     rdi,  __buffer
                 mov     r8, QBYTES*3        ; stack arg offset
                 xor     rdx, rdx            ; length
+                xor     rax, rax
                 cld
 
 .fmt_loop:      lodsb
@@ -184,7 +182,7 @@ bprintf:
 
 .jmp_b:         JMP_CNVRT_TO_POWER_OF_2 to_bin
 
-.jmp_d:         mov     rbx, qword [rbp+r8]
+.jmp_d:         movsxd  rbx, dword [rbp+r8]
                 push    rsi
                 add     r8, QBYTES
                 call    to_dec
@@ -226,7 +224,11 @@ bprintf:
 
 .end:           FLUSH_BUF
 
-                EPILOGUE
+                
+                pop     rbp
+                pop     rax
+                add     rsp, 6*QBYTES
+                push    rax
                 ret
 
 %undef JMP_CNVRT_TO_POWER_OF_2
