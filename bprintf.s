@@ -1,6 +1,9 @@
 section .text
 
+extern printf
 global bprintf
+
+default rel
 
 %define NULL_TERM       0x0                   ; null-terminator
 %define WBYTES          2                     ; bytes in word
@@ -62,7 +65,7 @@ global bprintf
 %macro WRITE_STDOUT 1
                 mov     rax, 1
                 mov     rdi, 0
-                mov     rsi, %1
+                lea     rsi, [%1]
                 syscall
 %endmacro
 ;----------------------------------------------
@@ -76,6 +79,9 @@ _start:
 ;----------------------------------------------
 ; Printf; supports %c, %%, %b, %x, %o, %d, %s
 ; (System-V-compliant)
+; Entry:    RDI             --> fmt string
+;           RSI, RDX, ... =/--> VA-args
+; Exit:     none
 ;----------------------------------------------
 
 %define BUF_SZ 164                           ; bprintf buf size, >64!
@@ -89,7 +95,7 @@ _start:
 %macro FLUSH_BUF_AND_RESET 0
                 push    rsi
                 FLUSH_BUF 
-                mov     rdi,  __buffer
+                lea     rdi,  [__buffer]
                 pop     rsi
                 xor     rdx, rdx
 %endmacro
@@ -126,7 +132,7 @@ _start:
 
                 MULTIPOP rsi, rdi
 
-                mov     rdi, __buffer
+                lea     rdi, [__buffer]
                 xor     rdx, rdx
 
                 jmp     .fmt_loop
@@ -142,7 +148,8 @@ _start:
 %endmacro
 
 
-bprintf:        pop     rax                 ; save return address
+bprintf:        
+                pop     rax                 ; save return address
 
                 MULTIPUSH r9, r8, rcx, rdx, rsi, rdi
 
@@ -152,7 +159,7 @@ bprintf:        pop     rax                 ; save return address
                 PROLOGUE
 
                 mov     rsi,  [rbp+QBYTES*2]
-                mov     rdi,  __buffer
+                lea     rdi,  [__buffer]
                 mov     r8, QBYTES*3        ; stack arg offset
                 xor     rdx, rdx            ; length
                 xor     rax, rax
@@ -172,7 +179,10 @@ bprintf:        pop     rax                 ; save return address
                 cmp     al, 'y'
                 jae     .jmp_default 
                 sub     rax, 'b'
-                jmp     qword [__JmpTbl+rax*QBYTES]
+                lea     rbx, [__JmpTbl]
+                movsxd  r13, dword [rbx + rax * QBYTES]
+                add     rbx, r13
+                jmp     rbx
 
 .jmp_c:         mov     rax, qword [rbp+r8]
                 add     r8, QBYTES
@@ -224,7 +234,6 @@ bprintf:        pop     rax                 ; save return address
 
 .end:           FLUSH_BUF
 
-                
                 pop     rbp
                 pop     rax
                 add     rsp, 6*QBYTES
@@ -241,13 +250,15 @@ bprintf:        pop     rax                 ; save return address
 %macro          CNVRT_TO_POW_OF_2 3
 %1:         
                 push    rdi
-                mov     rdi, __cnvrt_buf
+                lea     rdi, [__cnvrt_buf]
                 mov     rcx, QBYTES*8/%2
 
 .cnvrt_loop:    
                 mov     r12, rbx
                 and     r12, %3
-                mov     al, [__Ascii_Lut+r12]
+                lea     rax, [__Ascii_Lut]
+                lea     rax, [rax+r12]
+                mov     al, [rax]
                 stosb
                 shr     rbx, %2
                 jz      .cnvrt_loop_end
@@ -316,7 +327,6 @@ to_dec:         xor     r12, r12
 
                 mov     al, '-'
                 stosb
-                inc     r12
                 inc     rdi
 
                 xor     rbx, -1
@@ -324,7 +334,7 @@ to_dec:         xor     r12, r12
 
 .cnvrt_loop_prep:
                 push    rdi
-                mov     rdi, __cnvrt_buf
+                lea     rdi, [__cnvrt_buf]
 
 .cnvrt_loop:    xor     rdx, rdx
                 mov     rax, rbx
@@ -340,7 +350,8 @@ to_dec:         xor     r12, r12
                 jmp     .cnvrt_loop
 
 .cpy_loop_prep: pop     rdi
-                lea     rsi, [__cnvrt_buf+r12-1]
+                lea     rsi, [__cnvrt_buf]
+                lea     rsi, [rsi+r12-1]
                 mov     rcx, r12
 
 .cpy_loop:      mov     al, byte [rsi]
@@ -364,18 +375,18 @@ __FmtStr        db `%d alpha %A %x %o %b \nbeta %% %s %s`, NULL_TERM
 
 __Str1          db `gamma`, NULL_TERM
 
-__Str2          db 10 dup(`delta `), NULL_TERM
+__Str2          db 10 dup(`delta`), NULL_TERM
 
 __Ascii_Lut     db "0123456789ABCDEF"
 
-__JmpTbl        dq bprintf.jmp_b
-                dq bprintf.jmp_c
-                dq bprintf.jmp_d
-                dq 10 dup(bprintf.jmp_default)
-                dq bprintf.jmp_o
-                dq 3 dup(bprintf.jmp_default)
-                dq bprintf.jmp_s
-                dq 4 dup(bprintf.jmp_default)
-                dq bprintf.jmp_x
+__JmpTbl        dq bprintf.jmp_b - __JmpTbl
+                dq bprintf.jmp_c - __JmpTbl
+                dq bprintf.jmp_d - __JmpTbl
+                dq 10 dup(bprintf.jmp_default - __JmpTbl)
+                dq bprintf.jmp_o - __JmpTbl
+                dq 3 dup(bprintf.jmp_default - __JmpTbl)
+                dq bprintf.jmp_s - __JmpTbl
+                dq 4 dup(bprintf.jmp_default - __JmpTbl)
+                dq bprintf.jmp_x - __JmpTbl
 
 
