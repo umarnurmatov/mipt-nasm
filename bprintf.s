@@ -11,6 +11,15 @@ default rel
 %define QBYTES          8                     ; bytes in quad
 %define MAX_STR_LEN     0xffffffff
 
+struc SaveRegs
+    .rdi:    resq 1
+    .rsi:    resq 1
+    .rdx:    resq 1
+    .rcx:    resq 1
+    .r8 :    resq 1
+    .r9 :    resq 1
+endstruc
+
 ;----------------------------------------------
 %macro PROLOGUE 0
                 push    rbp
@@ -149,6 +158,13 @@ _start:
 
 
 bprintf:        
+                mov     qword [__save_regs+SaveRegs.rdi], rdi
+                mov     qword [__save_regs+SaveRegs.rsi], rsi
+                mov     qword [__save_regs+SaveRegs.rdx], rdx
+                mov     qword [__save_regs+SaveRegs.rcx], rcx
+                mov     qword [__save_regs+SaveRegs.r8], r8
+                mov     qword [__save_regs+SaveRegs.r9], r9
+
                 pop     rax                 ; save return address
 
                 MULTIPUSH r9, r8, rcx, rdx, rsi, rdi
@@ -235,9 +251,19 @@ bprintf:
 .end:           FLUSH_BUF
 
                 pop     rbp
-                pop     rax
+                pop     r13
                 add     rsp, 6*QBYTES
-                push    rax
+
+                mov     rdi, qword [__save_regs+SaveRegs.rdi]
+                mov     rsi, qword [__save_regs+SaveRegs.rsi]
+                mov     rdx, qword [__save_regs+SaveRegs.rdx]
+                mov     rcx, qword [__save_regs+SaveRegs.rcx]
+                mov     r8, qword [__save_regs+SaveRegs.r8]
+                mov     r9, qword [__save_regs+SaveRegs.r9]
+
+                call    printf wrt ..plt
+
+                push    r13
                 ret
 
 %undef JMP_CNVRT_TO_POWER_OF_2
@@ -369,6 +395,8 @@ __buffer        db BUF_SZ dup(0)
 
 __cnvrt_buf     db 64 dup(0)
 
+__save_regs     dq 0 dup(6)
+
 section .rodata
 
 __FmtStr        db `%d alpha %A %x %o %b \nbeta %% %s %s`, NULL_TERM
@@ -377,7 +405,7 @@ __Str1          db `gamma`, NULL_TERM
 
 __Str2          db 10 dup(`delta`), NULL_TERM
 
-__Ascii_Lut     db "0123456789ABCDEF"
+__Ascii_Lut     db "0123456789abcdef"
 
 __JmpTbl        dq bprintf.jmp_b - __JmpTbl
                 dq bprintf.jmp_c - __JmpTbl
@@ -388,5 +416,3 @@ __JmpTbl        dq bprintf.jmp_b - __JmpTbl
                 dq bprintf.jmp_s - __JmpTbl
                 dq 4 dup(bprintf.jmp_default - __JmpTbl)
                 dq bprintf.jmp_x - __JmpTbl
-
-
